@@ -57,12 +57,10 @@ jobs:
           - name: web
             file: Dockerfile
             target: production
-            suffix: ""
             cache: web
           - name: worker
             file: Dockerfile
             target: production-worker
-            suffix: -worker
             cache: worker
           - name: sandbox
             file: Dockerfile.sandbox
@@ -88,7 +86,7 @@ jobs:
           build-args: |
             NEXT_PUBLIC_APP_VERSION=${{ needs.version.outputs.tag }}
           tags: |
-            ${{ env.IMAGE }}${{ matrix.suffix }}:${{ needs.version.outputs.tag }}
+            ${{ env.IMAGE }}${{ matrix.name != 'web' && format('-{0}', matrix.name) || '' }}:${{ needs.version.outputs.tag }}
           cache-from: type=gha,scope=${{ matrix.cache }}
           cache-to: type=gha,mode=max,scope=${{ matrix.cache }}
           push: true
