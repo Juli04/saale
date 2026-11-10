@@ -66,6 +66,7 @@ import {
   normalizeThemeColors,
 } from "@/lib/branding/theme";
 import { isBrandingAvatarName } from "@/lib/branding/avatar-name";
+import { isBrandingIconName } from "@/lib/branding/icon-name";
 import {
   DEFAULT_THINKING_LEVEL_SETTING,
   isThinkingLevelSetting,
@@ -948,6 +949,24 @@ const ADMIN_PROPERTY_DEFINITIONS: AdminProperty[] = [
       ),
     read: (row) => row.brandingAvatar,
     write: (_row, value) => ({ brandingAvatar: value === null ? "" : String(value).trim() }),
+  },
+  {
+    key: "admin.brandingIcon",
+    group: GROUP.branding,
+    label: "Site icon",
+    description:
+      "Directory name of the uploaded site icon, set by the admin branding page. It feeds the favicon, the apple-touch icon, the installed app's icons and the mark beside the sidebar name. Without one, the shipped icons stay.",
+    columns: ["brandingIcon"],
+    apply: "none",
+    scope: "admin",
+    schema: z
+      .string()
+      .refine(
+        (value) => value === "" || isBrandingIconName(value),
+        "Use the directory name the upload route returned, or an empty string to fall back to the shipped icons.",
+      ),
+    read: (row) => row.brandingIcon,
+    write: (_row, value) => ({ brandingIcon: value === null ? "" : String(value).trim() }),
   },
   {
     key: "admin.webSearchEngines",

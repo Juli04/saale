@@ -18,6 +18,7 @@ export interface AdminSettingsView {
   themeColors: unknown;
   workspaceName: string;
   brandingAvatar: string;
+  brandingIcon: string;
   webSearchEngines: string[];
   webSearchCategories: string[];
   webSearchSafeSearch: number;
@@ -49,6 +50,7 @@ export function serializeAdminSettings(settings: AdminSettings): AdminSettingsVi
     themeColors: settings.themeColors,
     workspaceName: settings.workspaceName,
     brandingAvatar: settings.brandingAvatar,
+    brandingIcon: settings.brandingIcon,
     webSearchEngines: settings.webSearchEngines,
     webSearchCategories: settings.webSearchCategories,
     webSearchSafeSearch: settings.webSearchSafeSearch,

@@ -8,6 +8,7 @@ import { ImpersonationBanner } from "@/components/layout/impersonation-banner";
 import { loginPath, PATH_HEADER } from "@/lib/auth/redirect";
 import { enforceTwoFactorSetup } from "@/lib/auth/two-factor-policy";
 import { getWorkspaceName } from "@/lib/branding/workspace";
+import { getBrandingIcon } from "@/lib/branding/icon-server";
 
 // All dashboard pages require auth and redirect if unauthenticated
 // no point prerendering them as static content.
@@ -33,7 +34,9 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   return (
     <AppShell
-      nav={<DashboardNav workspaceName={await getWorkspaceName()} />}
+      nav={
+        <DashboardNav workspaceName={await getWorkspaceName()} iconName={await getBrandingIcon()} />
+      }
       banner={<ImpersonationBanner />}
     >
       {children}

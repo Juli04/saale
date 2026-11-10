@@ -572,6 +572,11 @@ model AdminSettings {
   /// File name of the uploaded agent avatar under <uploads>/branding. Empty
   /// means the built-in mark is drawn instead.
   brandingAvatar           String   @default("")
+  /// Directory name of the uploaded site icon under <uploads>/branding. It feeds
+  /// the favicon, the apple-touch icon, the installed app's icons and the mark
+  /// beside the sidebar wordmark. Empty keeps the shipped icons and the built-in
+  /// mark.
+  brandingIcon             String   @default("")
   /// The engines a web search may use, by their SearXNG name. Empty leaves every
   /// engine the search instance runs on; a populated list is the only set a
   /// search may draw from.

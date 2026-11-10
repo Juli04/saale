@@ -12,10 +12,12 @@ export function BrandingSection() {
   const { settings, loading, saving, saveStatus, save } = useAdminSettings();
   const [colors, setColors] = useState<BrandColors | null>(null);
   const [avatar, setAvatar] = useState<string | null>(null);
+  const [icon, setIcon] = useState<string | null>(null);
   const [name, setName] = useState<string | null>(null);
 
   const brandColors = colors ?? normalizeThemeColors(settings?.themeColors);
   const brandAvatar = avatar ?? settings?.brandingAvatar ?? "";
+  const brandIcon = icon ?? settings?.brandingIcon ?? "";
   const brandName = name ?? settings?.workspaceName ?? "";
 
   const saveBranding = async () => {
@@ -38,6 +40,8 @@ export function BrandingSection() {
         onColorsChange={setColors}
         avatar={brandAvatar}
         onAvatarChange={setAvatar}
+        icon={brandIcon}
+        onIconChange={setIcon}
       />
     </AdminSettingsFrame>
   );

@@ -70,6 +70,7 @@ export function adminSettingsRow(overrides: Partial<AdminSettings> = {}): AdminS
     themeColors: null,
     workspaceName: "",
     brandingAvatar: "",
+    brandingIcon: "",
     updatedAt: new Date(0),
     ...overrides,
   };

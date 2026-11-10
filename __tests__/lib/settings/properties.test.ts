@@ -204,6 +204,9 @@ describe("settings validation", () => {
       true,
     );
     expect(accepts("admin.brandingAvatar", "../../etc/passwd")).toBe(false);
+    expect(accepts("admin.brandingIcon", "")).toBe(true);
+    expect(accepts("admin.brandingIcon", "icon-2f1c0e4a-1b2c-4d5e-8f90-123456789abc")).toBe(true);
+    expect(accepts("admin.brandingIcon", "../../etc/passwd")).toBe(false);
   });
 
   it("validates the commit attribution switch and line", () => {
@@ -419,6 +422,17 @@ describe("settings projections", () => {
     expect(property.read(adminRow({ brandingAvatar: name }))).toBe(name);
     expect(property.write(row, ` ${name} `)).toEqual({ brandingAvatar: name });
     expect(property.write(row, null)).toEqual({ brandingAvatar: "" });
+  });
+
+  it("stores the site icon directory name, and clears it back to the shipped icons", () => {
+    const property = findProperty("admin.brandingIcon")!;
+    if (property.scope !== "admin") throw new Error("expected an admin property");
+    const dir = "icon-2f1c0e4a-1b2c-4d5e-8f90-123456789abc";
+    const row = adminRow();
+
+    expect(property.read(adminRow({ brandingIcon: dir }))).toBe(dir);
+    expect(property.write(row, ` ${dir} `)).toEqual({ brandingIcon: dir });
+    expect(property.write(row, null)).toEqual({ brandingIcon: "" });
   });
 
   it("exposes admin properties only in the admin scope", () => {
