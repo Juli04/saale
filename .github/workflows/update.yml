@@ -1,0 +1,135 @@
+name: update
+
+# Follows upstream once a day.
+#
+#   - custom is already on upstream/main  → nothing happens.
+#   - the rebase applies cleanly          → custom is pushed and the build runs.
+#   - the rebase conflicts                → nothing is pushed, an issue lists the
+#                                           files and the commands to reproduce.
+#
+# A conflict is a stop, not something this workflow papers over: the branch is
+# what gets deployed, so a wrong resolution would reach production without a
+# human having looked at it. Resolving one is a normal checkout and a rebase.
+
+on:
+  schedule:
+    # Upstream cuts its release around 03:17 UTC; this runs after it.
+    - cron: "41 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+  issues: write
+
+concurrency:
+  group: update
+  cancel-in-progress: false
+
+jobs:
+  rebase:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: custom
+          # The rebase needs the upstream history it is rebasing onto.
+          fetch-depth: 0
+
+      - name: Add upstream and fetch it
+        run: |
+          set -euo pipefail
+          git remote add upstream https://github.com/Blumlaut/saale.git
+          git fetch upstream --tags --prune
+
+      - name: How far behind?
+        id: behind
+        shell: bash
+        run: |
+          set -euo pipefail
+          count="$(git rev-list --count HEAD..upstream/main)"
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+          last="$(git describe --tags --abbrev=0 --match '[0-9]*' HEAD 2>/dev/null || echo none)"
+          echo "custom is $count commit(s) behind upstream/main (last release $last)"
+          echo "last=$last" >> "$GITHUB_OUTPUT"
+
+      - name: Nothing to do
+        if: steps.behind.outputs.count == '0'
+        run: echo "custom already sits on upstream/main."
+
+      - name: Rebase onto upstream/main
+        if: steps.behind.outputs.count != '0'
+        id: rebase
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if git rebase upstream/main; then
+            echo "clean=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Record what conflicts before the rebase state is thrown away.
+          {
+            echo "conflicts<<EOF"
+            git diff --name-only --diff-filter=U | sort
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          git rebase --abort
+          echo "clean=false" >> "$GITHUB_OUTPUT"
+
+      - name: Push the rebased branch
+        if: steps.rebase.outputs.clean == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git push --force-with-lease origin custom
+          # A push made with GITHUB_TOKEN does not trigger other workflows, so the
+          # build is started explicitly.
+          gh workflow run build.yml --ref custom
+          echo "pushed and started the build"
+
+      - name: Report the conflict
+        if: steps.rebase.outputs.clean == 'false'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CONFLICTS: ${{ steps.rebase.outputs.conflicts }}
+          BEHIND: ${{ steps.behind.outputs.count }}
+        run: |
+          set -euo pipefail
+          body="$RUNNER_TEMP/body.md"
+          {
+            echo "The daily rebase onto \`upstream/main\` conflicted, so **nothing was pushed**."
+            echo "Production is unaffected; \`custom\` stays where it is."
+            echo
+            echo "## Conflicted files"
+            echo '```'
+            echo "$CONFLICTS"
+            echo '```'
+            echo
+            echo "## Reproduce"
+            echo '```bash'
+            echo "git fetch upstream"
+            echo "git checkout custom && git rebase upstream/main"
+            echo "# resolve, then:"
+            echo "git push --force-with-lease origin custom"
+            echo '```'
+            echo
+            echo "The rebase was $BEHIND commit(s) behind at the time."
+          } > "$body"
+
+          existing="$(gh issue list --label update --state open --json number --jq '.[0].number' || true)"
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body-file "$body"
+          else
+            gh label create update --description "The daily upstream rebase needs a human" --color FBCA04 || true
+            gh issue create \
+              --title "Upstream rebase conflicts (custom)" \
+              --body-file "$body" \
+              --label update
+          fi
+          exit 1
