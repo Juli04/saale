@@ -57,9 +57,48 @@ einen Token mit `read:packages`:
 echo "$TOKEN" | docker login ghcr.io -u Juli04 --password-stdin
 ```
 
+## Automatik
+
+Zwei Teile, die zusammenspielen:
+
+**1. `update.yml` — täglich 05:41 UTC (nach dem Upstream-Release)**
+
+- `custom` liegt schon auf `upstream/main` → nichts passiert.
+- Rebase sauber → `custom` wird gepusht und der Build gestartet.
+- Rebase konfliktet → **nichts wird gepusht**, ein Issue mit den Dateien und
+  Reproduktionsbefehlen wird angelegt (Label `update`). Kein Autofix: der
+  Branch wird ausgerollt, eine falsche Auflösung ginge also direkt nach
+  Produktion.
+
+**2. `saale-autodeploy.timer` — alle 15 Minuten auf dem Server**
+
+- Fragt GHCR nach dem neuesten `custom-*`-Tag (Token: `/root/.secrets/ghcr.token`).
+- Neu → DB-Dump nach `/home/agent/backups/` (die letzten fünf bleiben),
+  Images ziehen, `FORK_TAG` setzen, `up -d`.
+- Danach Health-Check (`saale-web` healthy + HTTP 307 auf `127.0.0.1:3630`).
+- Schlägt das fehl → automatischer Rückroll auf den vorherigen Tag.
+- Verlauf: `journalctl -u saale-autodeploy.service`, dazu
+  `/var/lib/saale-autodeploy/history.log`.
+
+Manuell bleibt alles möglich: `FORK_TAG` setzen und
+`docker compose -f docker-compose.prod.yml -f docker-compose.override.yml -f docker-compose.fork.yml up -d`.
+Der Timer sieht den Unterschied und tut nichts, wenn der Tag stimmt.
+
+**Konflikt auflösen** (der einzige Fall, der einen Menschen braucht):
+
+```bash
+git fetch upstream
+git checkout custom && git rebase upstream/main
+# Konflikte lösen, Tests laufen lassen
+pnpm exec tsc --noEmit && pnpm exec vitest run
+git push --force-with-lease origin custom   # startet den Build
+```
+
+
+
 ## Etwas an upstream anbieten
 
-Private Repos können keine PRs an öffentliche Repos stellen — GitHub erlaubt
+Private Repos können keine PRs an öffentliche Repos stellen - GitHub erlaubt
 keine privaten Forks. Deshalb zweigt man die öffentliche Änderung von
 `upstream/main` ab und pusht sie in ein *öffentliches* Repo (Fork oder eigenes):
 
