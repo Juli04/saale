@@ -45,7 +45,13 @@ interface SearchResult {
   metadata?: { accountId?: string } | undefined;
 }
 
-export function DashboardNav({ workspaceName }: { workspaceName: string }) {
+export function DashboardNav({
+  workspaceName,
+  iconName,
+}: {
+  workspaceName: string;
+  iconName?: string;
+}) {
   const pathname = usePathname();
   const router = useRouter();
   const { visibleItems } = useSidebarNav();
@@ -289,7 +295,7 @@ export function DashboardNav({ workspaceName }: { workspaceName: string }) {
 
   return (
     <SidebarFrame>
-      <SidebarBrand name={workspaceName} />
+      <SidebarBrand name={workspaceName} iconName={iconName} />
 
       {/* Search */}
       <div className="px-1 pb-2" ref={searchRef}>

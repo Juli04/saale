@@ -14,6 +14,7 @@
 
 import {
   GITHUB_DEVICE_URL,
+  GITHUB_HOST,
   findDeviceCode,
   parseGithubHosts,
   type GithubProbe,
@@ -40,8 +41,6 @@ const COMMAND_TIMEOUT_SECONDS = 30;
 
 /** Output kept from a sign-in, so a failure has something to quote. */
 const MAX_OUTPUT_CHARS = 4000;
-
-const GITHUB_HOST = "github.com";
 
 /** The variable that outranks a gh login, and the one Saale hands commands. */
 const TOKEN_VARIABLE = "GH_TOKEN";
@@ -81,6 +80,28 @@ export async function githubStatus(userId: string): Promise<GithubStatus> {
     pending: running ? { code: running.code, url: GITHUB_DEVICE_URL } : null,
     error: running ? probe.error : (attempt?.error ?? probe.error),
   };
+}
+
+/**
+ * The login the workspace's *own* credential belongs to, or null when it has none.
+ *
+ * Asked of `gh` rather than of a file, so a login made in the workspace terminal
+ * is found without reading `hosts.yml`.
+ *
+ * A credential that only exists because `GH_TOKEN` sits in the account's sandbox
+ * variables is not that login: the probe runs `gh` with that variable in the
+ * environment, so `gh` reports it too (`source` names the variable instead of the
+ * config file). Folding the two together would let the reconcile treat a token
+ * the account merely keeps as a CLI login and, on the app path, tear the app
+ * down — which is what `admin.githubTokenPrecedence` exists to arbitrate.
+ */
+export async function githubCliLogin(userId: string): Promise<string | null> {
+  const probe = await probeGithub(userId);
+  // `stored`, not `credential`: with a GH_TOKEN in the environment gh reports
+  // that token as the active one, and only the config-file login is a login the
+  // workspace made. A source that names a variable is exactly what to skip —
+  // a `hosts.yml` login reports the file's path, not the word "gh".
+  return probe.stored?.login ?? null;
 }
 
 /**

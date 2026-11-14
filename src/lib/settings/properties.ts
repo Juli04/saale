@@ -66,6 +66,7 @@ import {
   normalizeThemeColors,
 } from "@/lib/branding/theme";
 import { isBrandingAvatarName } from "@/lib/branding/avatar-name";
+import { isBrandingIconName } from "@/lib/branding/icon-name";
 import {
   DEFAULT_THINKING_LEVEL_SETTING,
   isThinkingLevelSetting,
@@ -77,6 +78,14 @@ import {
   TOOL_EXPOSURES,
   type ToolCategoryKey,
 } from "@/lib/pi/tool-categories";
+import {
+  GITHUB_METHOD_DEFAULT,
+  GITHUB_METHODS,
+  GITHUB_SOURCE_NONE,
+  GITHUB_SOURCE_VALUES,
+  GITHUB_TOKEN_PRECEDENCE_DEFAULT,
+  GITHUB_TOKEN_PRECEDENCES,
+} from "@/lib/integrations/github-source";
 import { CODER_TOOL_DEFAULTS } from "@/lib/pi/coder-tools";
 import { DEFAULT_ATTRIBUTION_LINE, MAX_ATTRIBUTION_LENGTH } from "@/lib/pi/commit-attribution";
 import { ALL_TOOL_INFOS, type ToolPolicy } from "@/lib/pi/tool-infos";
@@ -252,6 +261,7 @@ const GROUP = {
   admin: "admin",
   branding: "branding",
   plugins: "plugins",
+  github: "github",
 } as const;
 
 // ─── Hand-written properties ─────────────────────────────────────────────────
@@ -396,6 +406,22 @@ const SCALAR_PROPERTIES: UserProperty[] = [
     read: (row) => row.emailWritingStyle,
     write: (_row, value) => ({
       emailWritingStyle: value === null ? null : String(value),
+    }),
+  },
+  {
+    key: "github.source",
+    group: GROUP.github,
+    label: "GitHub connection",
+    description:
+      'Which credential this account reaches GitHub with: "app" for this instance\'s GitHub App, "cli" for the GitHub CLI\'s own login in the workspace. Exactly one is active: changing it removes the other from the workspace. Set to null to link nothing. The change lands at the next GitHub read or remote command.',
+    values: GITHUB_SOURCE_VALUES,
+    columns: ["githubSource"],
+    apply: "sessions",
+    scope: "user",
+    schema: z.enum(GITHUB_SOURCE_VALUES),
+    read: (row) => row.githubSource,
+    write: (_row, value) => ({
+      githubSource: value === null ? GITHUB_SOURCE_NONE : String(value),
     }),
   },
 ];
@@ -925,6 +951,24 @@ const ADMIN_PROPERTY_DEFINITIONS: AdminProperty[] = [
     write: (_row, value) => ({ brandingAvatar: value === null ? "" : String(value).trim() }),
   },
   {
+    key: "admin.brandingIcon",
+    group: GROUP.branding,
+    label: "Site icon",
+    description:
+      "Directory name of the uploaded site icon, set by the admin branding page. It feeds the favicon, the apple-touch icon, the installed app's icons and the mark beside the sidebar name. Without one, the shipped icons stay.",
+    columns: ["brandingIcon"],
+    apply: "none",
+    scope: "admin",
+    schema: z
+      .string()
+      .refine(
+        (value) => value === "" || isBrandingIconName(value),
+        "Use the directory name the upload route returned, or an empty string to fall back to the shipped icons.",
+      ),
+    read: (row) => row.brandingIcon,
+    write: (_row, value) => ({ brandingIcon: value === null ? "" : String(value).trim() }),
+  },
+  {
     key: "admin.webSearchEngines",
     group: GROUP.admin,
     label: "Search engines",
@@ -1095,6 +1139,38 @@ const ADMIN_PROPERTY_DEFINITIONS: AdminProperty[] = [
     read: (row) => row.voiceLanguage,
     write: (_row, value) => ({
       voiceLanguage: value === null ? null : String(value).trim() || null,
+    }),
+  },
+  {
+    key: "admin.githubMethod",
+    group: GROUP.admin,
+    label: "GitHub sign-in",
+    description:
+      '"choice" lets each account pick between the GitHub CLI\'s own login and this instance\'s GitHub App. "cli" offers only the CLI. "app" offers only the app, and a CLI login found in a workspace is removed there instead of being adopted.',
+    values: GITHUB_METHODS,
+    columns: ["githubMethod"],
+    apply: "none",
+    scope: "admin",
+    schema: z.enum(GITHUB_METHODS),
+    read: (row) => row.githubMethod,
+    write: (_row, value) => ({
+      githubMethod: value === null ? GITHUB_METHOD_DEFAULT : String(value),
+    }),
+  },
+  {
+    key: "admin.githubTokenPrecedence",
+    group: GROUP.admin,
+    label: "GitHub: app or own token",
+    description:
+      '"app" lets this instance\'s GitHub App win when an account also keeps a `GH_TOKEN` in its sandbox variables; "variable" lets that variable win instead. Exactly one of the two is used either way, even when nobody chose.',
+    values: GITHUB_TOKEN_PRECEDENCES,
+    columns: ["githubTokenPrecedence"],
+    apply: "none",
+    scope: "admin",
+    schema: z.enum(GITHUB_TOKEN_PRECEDENCES),
+    read: (row) => row.githubTokenPrecedence,
+    write: (_row, value) => ({
+      githubTokenPrecedence: value === null ? GITHUB_TOKEN_PRECEDENCE_DEFAULT : String(value),
     }),
   },
 ];

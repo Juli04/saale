@@ -89,12 +89,34 @@ export function SidebarFrame({ children }: { children: React.ReactNode }) {
 }
 
 /** Wordmark, an optional area badge, and the notification bell. */
-export function SidebarBrand({ name, badge }: { name: string; badge?: string }) {
+export function SidebarBrand({
+  name,
+  badge,
+  iconName,
+}: {
+  name: string;
+  badge?: string;
+  /** Directory name of the uploaded site icon; empty draws the built-in mark. */
+  iconName?: string | undefined;
+}) {
   return (
     <>
       <div className="mb-1 flex items-center justify-between px-3 py-2">
         <Link href="/dashboard/chat" className="flex min-w-0 flex-1 items-center gap-2">
-          <ChevronRight className="text-primary h-5 w-5 shrink-0" />
+          {iconName ? (
+            // The rendered icon rather than the mark: one uploaded picture becomes
+            // the favicon, the installed app's icon and this.
+            // eslint-disable-next-line @next/next/no-img-element -- sized by CSS, no layout shift
+            <img
+              src={`/api/branding/icon/64?v=${iconName}`}
+              alt=""
+              width={20}
+              height={20}
+              className="h-5 w-5 shrink-0 rounded"
+            />
+          ) : (
+            <ChevronRight className="text-primary h-5 w-5 shrink-0" />
+          )}
           <span className="min-w-0 flex-1 truncate text-lg font-bold tracking-tight">{name}</span>
         </Link>
         <span className="flex shrink-0 items-center gap-1.5">

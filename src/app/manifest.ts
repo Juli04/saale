@@ -1,6 +1,7 @@
 import type { MetadataRoute } from "next";
 
 import brand from "@/lib/pwa/brand.json";
+import { getBrandingIcon } from "@/lib/branding/icon-server";
 import { getWorkspaceName } from "@/lib/branding/workspace";
 
 /**
@@ -20,7 +21,57 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export default async function manifest(): Promise<MetadataRoute.Manifest> {
-  const name = await getWorkspaceName();
+  const [name, icon] = await Promise.all([getWorkspaceName(), getBrandingIcon()]);
+  const version = icon ? `?v=${icon}` : "";
+
+  /*
+   * An uploaded icon replaces the shipped set in one move: same sizes, same
+   * purposes, different source. Without one the files under `public/icons` stay
+   * the icons of the installed app.
+   */
+  const icons: MetadataRoute.Manifest["icons"] = icon
+    ? [
+        {
+          src: `/api/branding/icon/192${version}`,
+          sizes: "192x192",
+          type: "image/png",
+          purpose: "any",
+        },
+        {
+          src: `/api/branding/icon/512${version}`,
+          sizes: "512x512",
+          type: "image/png",
+          purpose: "any",
+        },
+        {
+          src: `/api/branding/icon/maskable-192${version}`,
+          sizes: "192x192",
+          type: "image/png",
+          purpose: "maskable",
+        },
+        {
+          src: `/api/branding/icon/maskable-512${version}`,
+          sizes: "512x512",
+          type: "image/png",
+          purpose: "maskable",
+        },
+      ]
+    : [
+        { src: "/icons/icon-192.png", sizes: "192x192", type: "image/png", purpose: "any" },
+        { src: "/icons/icon-512.png", sizes: "512x512", type: "image/png", purpose: "any" },
+        {
+          src: "/icons/maskable-192.png",
+          sizes: "192x192",
+          type: "image/png",
+          purpose: "maskable",
+        },
+        {
+          src: "/icons/maskable-512.png",
+          sizes: "512x512",
+          type: "image/png",
+          purpose: "maskable",
+        },
+      ];
 
   return {
     id: "/",
@@ -34,12 +85,7 @@ export default async function manifest(): Promise<MetadataRoute.Manifest> {
     background_color: brand.backgroundColor,
     theme_color: brand.backgroundColor,
     categories: ["productivity", "utilities"],
-    icons: [
-      { src: "/icons/icon-192.png", sizes: "192x192", type: "image/png", purpose: "any" },
-      { src: "/icons/icon-512.png", sizes: "512x512", type: "image/png", purpose: "any" },
-      { src: "/icons/maskable-192.png", sizes: "192x192", type: "image/png", purpose: "maskable" },
-      { src: "/icons/maskable-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
-    ],
+    icons,
     shortcuts: [
       { name: "Chat", url: "/dashboard/chat" },
       { name: "Mail", url: "/dashboard/mail" },

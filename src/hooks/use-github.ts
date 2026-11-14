@@ -1,49 +1,109 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { deleteJson, fetchJson, postJson } from "@/lib/http";
-import type { GithubStatus } from "@/lib/integrations/github";
+import { fetchJson, postJson, putJson } from "@/lib/http";
+import type { GithubAppSection, GithubStatus } from "@/lib/integrations/github";
+
+export type { GithubAppSection };
+
+/** Both sources as the API reports them, and the errors a call can raise. */
+interface GithubConnection {
+  app: GithubAppSection;
+  cli: GithubStatus;
+}
+
+/** One installation's repository set, as the picker shows it. */
+export interface GithubRepositoryChoices {
+  installationId: string;
+  accountLogin: string;
+  /** "User" | "Organization" — decides where GitHub's settings page lives. */
+  accountType: string;
+  selection: string;
+  /** False when the installation covers every repository; GitHub then refuses. */
+  canManage: boolean;
+  installed: { id: string; name: string; fullName: string }[];
+  candidates: { id: string; fullName: string; installed: boolean }[];
+}
 
 /** Before the first read: nothing known, so nothing claimed. */
-const UNKNOWN: GithubStatus = { credential: null, pending: null, error: null };
+const UNKNOWN_APP: GithubAppSection = {
+  configured: false,
+  slug: null,
+  name: null,
+  permissions: null,
+  authorized: null,
+  installations: [],
+  pending: null,
+};
+
+/** Nothing known about the CLI either. */
+const UNKNOWN_CLI: GithubStatus = { credential: null, pending: null, error: null };
+
+/** How often the card asks again while a code is out. */
+const POLL_MS = 3000;
 
 /**
- * The GitHub sign-in of the user's workspace.
+ * The GitHub connection of this account, in both forms it can take.
  *
- * The API answers with what `gh` reports, so this hook holds no token: it starts
- * a sign-in, reads the code gh printed and asks again until GitHub is done with
- * it.
+ * The hook holds no token: the API answers with what the app and the CLI report,
+ * and a status read is also what drives an app sign-in forward, so polling is all
+ * a waiting card has to do.
  */
 export function useGithub() {
-  const [status, setStatus] = useState<GithubStatus>(UNKNOWN);
+  const [app, setApp] = useState<GithubAppSection>(UNKNOWN_APP);
+  const [cli, setCli] = useState<GithubStatus>(UNKNOWN_CLI);
   const [loading, setLoading] = useState(true);
   const [starting, setStarting] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async (): Promise<GithubStatus | null> => {
+  const apply = useCallback((data: GithubConnection) => {
+    setApp(data.app);
+    setCli(data.cli);
+  }, []);
+
+  const load = useCallback(async (): Promise<GithubConnection | null> => {
     try {
-      const data = await fetchJson<GithubStatus>("/api/integrations/github");
-      setStatus(data);
+      const data = await fetchJson<GithubConnection>("/api/integrations/github");
+      apply(data);
       return data;
     } catch (err) {
-      console.error("Failed to read the GitHub sign-in:", err);
-      setError(err instanceof Error ? err.message : "Failed to read the GitHub sign-in");
+      console.error("Failed to read the GitHub connection:", err);
+      setError(err instanceof Error ? err.message : "Failed to read the GitHub connection");
       return null;
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [apply]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  const start = useCallback(async (): Promise<boolean> => {
+  /** While a code is out, the browser may approve it at any moment. */
+  useEffect(() => {
+    if (!app.pending && !cli.pending) return;
+    const timer = setInterval(() => {
+      void load();
+    }, POLL_MS);
+    return () => clearInterval(timer);
+  }, [app.pending, cli.pending, load]);
+
+  /** A login made elsewhere (the workspace terminal) shows up on focus again. */
+  useEffect(() => {
+    const onFocus = () => {
+      void load();
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [load]);
+
+  const connect = useCallback(async (): Promise<boolean> => {
     setStarting(true);
     setError(null);
     try {
-      setStatus(await postJson<GithubStatus>("/api/integrations/github", {}));
+      const data = await postJson<GithubConnection>("/api/integrations/github", {});
+      apply(data);
       return true;
     } catch (err) {
       console.error("Failed to start a GitHub sign-in:", err);
@@ -52,21 +112,92 @@ export function useGithub() {
     } finally {
       setStarting(false);
     }
-  }, []);
+  }, [apply]);
 
-  /** Stop a sign-in in flight, or sign out of GitHub, whichever is left to do. */
-  const disconnect = useCallback(async (): Promise<void> => {
-    setDisconnecting(true);
+  /** Stop a sign-in in flight, or sign out of one source. */
+  const disconnect = useCallback(
+    async (source: "app" | "cli"): Promise<void> => {
+      setDisconnecting(true);
+      setError(null);
+      try {
+        apply(
+          await fetchJson<GithubConnection>(`/api/integrations/github?source=${source}`, {
+            method: "DELETE",
+          }),
+        );
+      } catch (err) {
+        console.error(`Failed to sign out of GitHub (${source}):`, err);
+        setError(err instanceof Error ? err.message : "Failed to sign out of GitHub");
+      } finally {
+        setDisconnecting(false);
+      }
+    },
+    [apply],
+  );
+
+  /** Drop a code nobody is going to approve, without signing anything out. */
+  const cancel = useCallback(async (): Promise<void> => {
     setError(null);
     try {
-      setStatus(await deleteJson<GithubStatus>("/api/integrations/github"));
+      apply(
+        await fetchJson<GithubConnection>("/api/integrations/github?cancel=1", {
+          method: "DELETE",
+        }),
+      );
     } catch (err) {
-      console.error("Failed to sign out of GitHub:", err);
-      setError(err instanceof Error ? err.message : "Failed to sign out of GitHub");
-    } finally {
-      setDisconnecting(false);
+      console.error("Failed to cancel the GitHub sign-in:", err);
+      setError(err instanceof Error ? err.message : "Failed to cancel the GitHub sign-in");
     }
-  }, []);
+  }, [apply]);
 
-  return { status, loading, starting, disconnecting, error, load, start, disconnect };
+  /** The repository set of one installation, for the picker. */
+  const loadRepositories = useCallback(
+    async (installationId: string): Promise<GithubRepositoryChoices | null> => {
+      try {
+        return await fetchJson<GithubRepositoryChoices>(
+          `/api/integrations/github/repositories?installation=${encodeURIComponent(installationId)}`,
+        );
+      } catch (err) {
+        console.error("Failed to read the installation's repositories:", err);
+        setError(err instanceof Error ? err.message : "Failed to read the repositories");
+        return null;
+      }
+    },
+    [],
+  );
+
+  /** Apply a selection; the installation is what changes, not only a token. */
+  const saveRepositories = useCallback(
+    async (
+      installationId: string,
+      repositoryIds: readonly string[],
+    ): Promise<GithubRepositoryChoices | null> => {
+      try {
+        return await putJson<GithubRepositoryChoices>("/api/integrations/github/repositories", {
+          installationId,
+          repositoryIds: [...repositoryIds],
+        });
+      } catch (err) {
+        console.error("Failed to change the installation's repositories:", err);
+        setError(err instanceof Error ? err.message : "Failed to change the repositories");
+        return null;
+      }
+    },
+    [],
+  );
+
+  return {
+    app,
+    cli,
+    loading,
+    starting,
+    disconnecting,
+    error,
+    load,
+    connect,
+    cancel,
+    disconnect,
+    loadRepositories,
+    saveRepositories,
+  };
 }

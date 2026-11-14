@@ -1,7 +1,10 @@
 import type { Page } from "@playwright/test";
 
+import type { GithubAppSection, GithubStatus } from "@/lib/integrations/github";
+
 import { gotoAndSettle, DESKTOP_VIEWPORT } from "./utils";
 import { settingsSection, type SettingsSectionId } from "@/lib/navigation/settings-nav";
+import { WORKTREE_KEPT_CODE } from "@/lib/coder/force-delete";
 import { FILES_NOTES, mockFiles } from "./files-mocks";
 
 /**
@@ -152,6 +155,7 @@ const PROVIDER_ADD_SHEET = "src/components/providers/provider-add-sheet.tsx";
 const MODEL_LIMITS_SHEET = "src/components/providers/model-limits-sheet.tsx";
 const CODER_CREATE_DIALOG = "src/components/coder/project-create-dialog.tsx";
 const FORCE_DELETE_DIALOG = "src/components/shared/force-delete-dialog.tsx";
+const DELETE_ERROR_DIALOG = "src/components/chat/delete-error-dialog.tsx";
 const PROJECT_SETTINGS_SHEET = "src/components/coder/project-settings-sheet.tsx";
 const CODER_LAYOUT = "src/app/dashboard/coder/layout.tsx";
 const SETTINGS = settingsSection("profile").href;
@@ -379,16 +383,34 @@ async function mockTelegramLinked(page: Page) {
  * box at a phone width and never needs a live device flow to render.
  */
 async function mockGithubSignIn(page: Page) {
-  const pending = {
-    credential: null,
-    pending: { code: "1B47-ABE8", url: "https://github.com/login/device" },
-    error: null,
+  // The card reads two sections: the app's, and the CLI's own login. The CLI is
+  // the one waiting for a code here, which is what this scenario opens.
+  //
+  // Both are typed against the route's own shapes, so a field added to the answer
+  // fails `tsc` here instead of crashing the card in this spec.
+  const app: GithubAppSection = {
+    configured: false,
+    slug: null,
+    name: null,
+    permissions: null,
+    authorized: null,
+    installations: [],
+    pending: null,
+  };
+  const idle: GithubStatus = { credential: null, pending: null, error: null };
+  const pending: { app: GithubAppSection; cli: GithubStatus } = {
+    app,
+    cli: {
+      credential: null,
+      pending: { code: "1B47-ABE8", url: "https://github.com/login/device" },
+      error: null,
+    },
   };
   await page.route(/\/api\/integrations\/github$/, async (route) => {
     if (route.request().method() === "GET" || route.request().method() === "POST") {
       return route.fulfill({ json: pending });
     }
-    return route.fulfill({ json: { credential: null, pending: null, error: null } });
+    return route.fulfill({ json: { app, cli: idle } });
   });
 }
 
@@ -457,7 +479,7 @@ async function mockProviderSignIn(page: Page) {
   });
 }
 
-async function mockMcpServers(page: Page) {
+export async function mockMcpServers(page: Page) {
   await page.route(/\/api\/mcp\/servers(\?|$)/, async (route) => {
     if (route.request().method() !== "GET") return route.fallback();
     await route.fulfill({
@@ -466,7 +488,10 @@ async function mockMcpServers(page: Page) {
           {
             id: "e2e-mcp",
             name: "homeassistant",
+            transport: "http",
             url: "https://homeassistant.local:8123/api/mcp",
+            command: null,
+            cwd: null,
             description: "Control the smart home",
             toolPolicy: "ask",
             enabled: true,
@@ -474,6 +499,29 @@ async function mockMcpServers(page: Page) {
             chatEnabled: true,
             coderEnabled: false,
             hasToken: true,
+            hasOAuth: false,
+            shared: false,
+            createdAt: NOW,
+            updatedAt: NOW,
+          },
+          {
+            // A command in the workspace: the row shows the command line, and
+            // the sheet opens with the command fields instead of a URL.
+            id: "e2e-mcp-files",
+            envNames: ["GITHUB_PERSONAL_ACCESS_TOKEN", "REGION"],
+            name: "workspace_files",
+            transport: "stdio",
+            url: null,
+            command: "npx -y @modelcontextprotocol/server-filesystem .",
+            cwd: "docs",
+            description: "Read and write files in the workspace",
+            toolPolicy: "allow",
+            enabled: true,
+            chatEnabled: true,
+            coderEnabled: true,
+            hasToken: false,
+            hasOAuth: false,
+            shared: false,
             createdAt: NOW,
             updatedAt: NOW,
           },
@@ -688,6 +736,40 @@ async function mockMessageStats(page: Page): Promise<void> {
   );
 }
 
+/** The chat a stopped delete reports on, long enough to need wrapping. */
+const DELETE_ERROR_TITLE = "A chat whose checkout still held uncommitted work";
+
+/** One chat the list reports a failed delete for, so it wears the mark. */
+async function mockChatDeleteError(page: Page): Promise<void> {
+  await page.route(/\/api\/chat\/sessions$/, (route) =>
+    route.fulfill({
+      json: {
+        project: null,
+        sessions: [
+          {
+            id: "e2e-delete-failed",
+            title: DELETE_ERROR_TITLE,
+            temporary: false,
+            pinned: false,
+            messageCount: 2,
+            watcherCount: 0,
+            isGenerating: false,
+            deleting: false,
+            deleteError:
+              "The checkout at /w/3f2a91c0 had uncommitted work, so it was kept and the chat was not removed.",
+            deleteErrorCode: WORKTREE_KEPT_CODE,
+            origin: "user",
+            worktree: { branch: "wt/c-3f2a91c0-remove-the-old-token-refresh-path" },
+            createdAt: NOW,
+            updatedAt: NOW,
+            lastActivityAt: NOW,
+          },
+        ],
+      },
+    }),
+  );
+}
+
 /** A project list and one project's chats, so the coder overlays have rows. */
 async function mockCoderProjects(page: Page) {
   // The project's chat list reads the chat endpoint, filtered by project.
@@ -895,6 +977,33 @@ async function mockCoderChat(page: Page) {
   );
 }
 
+/** A saved app, so the panel's destructive confirmation can be opened offline. */
+async function mockGithubApp(page: Page) {
+  await page.route(/\/api\/admin\/github\/app$/, (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return route.fulfill({
+      json: {
+        app: {
+          appId: "5674116",
+          clientId: "Iv23liJl7QK5AbPMsDQ3",
+          slug: "askguenther-test",
+          name: "AskGuenther Test",
+          ownerLogin: "Juli04",
+          permissions: { contents: "write", metadata: "read", pull_requests: "write" },
+          enabled: true,
+          updatedAt: NOW,
+        },
+        publicUrl: "https://saale.example.com",
+        callbackUrl: "https://saale.example.com/api/integrations/github/installed",
+        setupUrl: "https://saale.example.com/api/integrations/github/installed",
+        connectedAccounts: 1,
+        installations: 1,
+        tokenPrecedence: "app",
+      },
+    });
+  });
+}
+
 export const MODAL_SCENARIOS: ModalScenario[] = [
   // ── Infrastructure ────────────────────────────────────────────────────────
   {
@@ -1040,6 +1149,18 @@ export const MODAL_SCENARIOS: ModalScenario[] = [
       await sheet.locator('[data-slot="dropdown-menu-trigger"]').first().click();
       await click(page, '[role="menuitem"]:has-text("Select chat")');
       await click(page, 'button[aria-label="Delete 1 selected chat"]');
+    },
+  },
+  {
+    name: "chat · delete failure",
+    path: "/dashboard/chat",
+    sources: [DELETE_ERROR_DIALOG],
+    mock: mockChatDeleteError,
+    open: async (page) => {
+      // The list lives inside the sheet at phone widths, like every chat overlay.
+      await click(page, '[data-slot="sheet-trigger"]');
+      const sheet = page.locator('[data-slot="sheet-content"]:visible').last();
+      await sheet.getByRole("button", { name: `Delete failed for ${DELETE_ERROR_TITLE}` }).click();
     },
   },
   {
@@ -1344,13 +1465,47 @@ export const MODAL_SCENARIOS: ModalScenario[] = [
     },
   },
   {
+    name: "settings · add mcp command server",
+    path: SETTINGS,
+    sources: [MCP_SHEET],
+    mock: mockMcpServers,
+    open: async (page) => {
+      await openSettingsSection(page, "integrations");
+      await click(page, '[aria-label="Add server"]');
+      await click(page, '[aria-label="Connection"]');
+      await clickText(page, "Command in workspace");
+    },
+  },
+  {
+    name: "settings · mcp command server with variables",
+    path: SETTINGS,
+    sources: [MCP_SHEET],
+    mock: mockMcpServers,
+    open: async (page) => {
+      await openSettingsSection(page, "integrations");
+      await click(page, '[aria-label="Actions for workspace_files"]');
+      await clickText(page, "Edit");
+    },
+  },
+  {
+    name: "settings · import mcp config",
+    path: SETTINGS,
+    sources: ["src/components/mcp/mcp-import-dialog.tsx"],
+    mock: mockMcpServers,
+    open: async (page) => {
+      await openSettingsSection(page, "integrations");
+      await click(page, '[aria-label="Import config"]');
+    },
+  },
+  {
     name: "settings · remove mcp server confirmation",
     path: SETTINGS,
     sources: [MCP_TAB],
     mock: mockMcpServers,
     open: async (page) => {
       await openSettingsSection(page, "integrations");
-      await click(page, '[aria-label="Remove homeassistant"]');
+      await click(page, '[aria-label="Actions for homeassistant"]');
+      await clickText(page, "Remove");
     },
   },
   {
@@ -1483,6 +1638,13 @@ export const MODAL_SCENARIOS: ModalScenario[] = [
       await openRowMenu(page, "extremely long contact display name");
       await click(page, '[role="menuitem"]:has-text("Delete")');
     },
+  },
+  {
+    name: "admin · remove github app confirmation",
+    path: "/admin/settings/github",
+    sources: ["src/components/admin/github-app-panel.tsx"],
+    mock: mockGithubApp,
+    open: (page) => click(page, 'button:has-text("Remove")'),
   },
   {
     name: "admin · remove mail relay confirmation",

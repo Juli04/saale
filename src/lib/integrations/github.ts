@@ -8,6 +8,15 @@
 
 export const GITHUB_DEVICE_URL = "https://github.com/login/device";
 
+/**
+ * The only host this feature speaks to. Everything that names it imports it
+ * from here, and this module imports nothing of its own.
+ */
+export const GITHUB_HOST = "github.com";
+
+/** The host as a URL, for the credential helper's subsection. */
+export const GITHUB_HOST_URL = `https://${GITHUB_HOST}`;
+
 /** A refusal that quotes GitHub's body is cut to the line worth reading. */
 const MAX_ERROR_LENGTH = 300;
 
@@ -34,7 +43,27 @@ export interface GithubStatus {
 /** What a status read found: a working credential, or why the one it found is not. */
 export interface GithubProbe {
   credential: GithubCredential | null;
+  /**
+   * The credential gh keeps in its own config, when it has one.
+   *
+   * `credential` is what a command would use, which may be a token Saale or the
+   * account handed gh through the environment. That is not a login the workspace
+   * made, and the source decision may only act on this one.
+   */
+  stored: GithubCredential | null;
   error: string | null;
+}
+
+/**
+ * Whether gh took this token from the environment rather than from its config.
+ *
+ * gh reports the variable's name for a handed-in token and the path of its
+ * `hosts.yml` for one it stored itself; a bare `"gh"` appears only when the
+ * field is missing. So a source that reads like a variable name is the one to
+ * reject — a path never does.
+ */
+export function isVariableTokenSource(source: string): boolean {
+  return /^[A-Z][A-Z0-9_]*$/.test(source);
 }
 
 /** One host's entry in the `gh auth status --json hosts` answer. */
@@ -59,28 +88,32 @@ interface HostEntry {
  */
 export function parseGithubHosts(stdout: string): GithubProbe {
   const text = stdout.trim();
-  if (!text.startsWith("{")) return { credential: null, error: null };
+  if (!text.startsWith("{")) return { credential: null, stored: null, error: null };
 
   let parsed: { hosts?: Record<string, HostEntry[]> };
   try {
     parsed = JSON.parse(text) as { hosts?: Record<string, HostEntry[]> };
   } catch (err) {
     console.error("Failed to read the GitHub CLI's auth status:", err);
-    return { credential: null, error: null };
+    return { credential: null, stored: null, error: null };
   }
 
   const entries = Object.entries(parsed.hosts ?? {}).flatMap(([host, list]) =>
     (list ?? []).map((entry) => ({ host, entry })),
   );
   const chosen = entries.find(({ entry }) => entry.active) ?? entries[0];
-  if (!chosen) return { credential: null, error: null };
+  if (!chosen) return { credential: null, stored: null, error: null };
 
   if (chosen.entry.state === "error") {
-    return { credential: null, error: firstLine(chosen.entry.error) ?? "GitHub refused the token" };
+    return {
+      credential: null,
+      stored: storedCredential(entries),
+      error: firstLine(chosen.entry.error) ?? "GitHub refused the token",
+    };
   }
 
   const login = chosen.entry.login?.trim();
-  if (!login) return { credential: null, error: null };
+  if (!login) return { credential: null, stored: storedCredential(entries), error: null };
 
   return {
     credential: {
@@ -90,8 +123,65 @@ export function parseGithubHosts(stdout: string): GithubProbe {
       gitProtocol: chosen.entry.gitProtocol?.trim() || null,
       source: chosen.entry.tokenSource?.trim() || "gh",
     },
+    stored: storedCredential(entries),
     error: null,
   };
+}
+
+/**
+ * What the card needs of one GitHub source.
+ *
+ * Declared here because the route assembles it and the hook reads it: a field
+ * added on one side has to appear on the other, and a second copy is how the two
+ * drift apart. `src/lib/integrations/github.ts` imports nothing, so the hook can
+ * pull it into the browser bundle.
+ */
+export interface GithubAppSection {
+  /** An admin saved an app and left it switched on. */
+  configured: boolean;
+  /** The app's slug, for the install link GitHub hosts. */
+  slug: string | null;
+  /** The app's display name. */
+  name: string | null;
+  /** The permissions the app was registered with. */
+  permissions: Record<string, string> | null;
+  /** The account authorized it. */
+  authorized: { login: string; expiresAt: string | null } | null;
+  /** Installations this account may use. */
+  installations: {
+    installationId: string;
+    accountLogin: string;
+    accountType: string;
+    repositorySelection: string;
+    repositories: string[] | null;
+    suspended: boolean;
+  }[];
+  /** A sign-in waiting for the user to type a code. */
+  pending: { userCode: string; verificationUri: string; expiresAt: string } | null;
+}
+
+/** The entry gh keeps itself, skipping any it was handed through the environment. */
+function storedCredential(entries: { host: string; entry: HostEntry }[]): GithubCredential | null {
+  for (const { host, entry } of entries) {
+    if (entry.state === "error") continue;
+    // gh lists every host it holds a token for, and a login against an
+    // enterprise host is not a login for github.com. Everything else in this
+    // feature is github.com-only, so this must not answer for another host.
+    const hostName = entry.host ?? host;
+    if (hostName.toLowerCase() !== GITHUB_HOST) continue;
+    const login = entry.login?.trim();
+    if (!login) continue;
+    const source = entry.tokenSource?.trim() || "gh";
+    if (isVariableTokenSource(source)) continue;
+    return {
+      host: hostName,
+      login,
+      scopes: entry.scopes?.trim() || null,
+      gitProtocol: entry.gitProtocol?.trim() || null,
+      source,
+    };
+  }
+  return null;
 }
 
 /** The one-time code in gh's output, e.g. `! First copy your one-time code: 1B47-ABE8`. */

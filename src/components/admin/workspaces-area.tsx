@@ -25,7 +25,7 @@ import { GlassPanel } from "@/components/ui/glass-panel";
 import { Separator } from "@/components/ui/separator";
 import { Page, PageAction, PageActions, PageScroll } from "@/components/layout/page";
 import { deleteJson, fetchJson, postJson } from "@/lib/http";
-import { cn, formatFileSize, ROW_ACTION } from "@/lib/utils";
+import { cn, formatFileSize } from "@/lib/utils";
 import { formatRelativeDate, plural } from "@/lib/format";
 import type { WorkspaceAudit, WorkspaceAuditRow } from "@/lib/admin/workspaces";
 
@@ -419,7 +419,7 @@ function WorkspaceRow({
               type="button"
               variant="ghost"
               size="icon-sm"
-              className={cn("shrink-0", ROW_ACTION)}
+              className="shrink-0"
               aria-label={`Actions for ${name}`}
               {...triggerProps}
             >

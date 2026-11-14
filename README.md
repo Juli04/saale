@@ -51,6 +51,11 @@ schedules.
 Monaco (VS Code's editor) is built in for edits. Connect GitHub under Settings →
 Integrations for private repositories, pushes and pull requests.
 
+## Model Context Protocol
+
+Saale supports MCP in full, with remote servers over Streamable HTTP and local ones over
+stdio. Add one in Settings, paste a config from another client, or start from a preset.
+
 ## Multi-User?
 
 Yes, with permission groups. Providers come in two kinds: global ones an admin configures,
@@ -104,13 +109,14 @@ docker compose -f docker-compose.prod.yml up -d
 
 ## Docs
 
-| Page                                       | What is in it                                    |
-| ------------------------------------------ | ------------------------------------------------ |
-| [Install](docs/install.md)                 | Compose, ports, a domain, TLS, updates, backups  |
-| [Configuration](docs/configuration.md)     | Every environment variable that matters          |
-| [Coder previews](docs/previews.md)         | A wildcard domain for dev servers in a workspace |
-| [Firefox sidebar](docs/firefox-sidebar.md) | Using Saale as Firefox's AI chatbot provider     |
-| [Development](docs/development.md)         | A checkout, the test suite, demo data            |
+| Page                                       | What is in it                                           |
+| ------------------------------------------ | ------------------------------------------------------- |
+| [Install](docs/install.md)                 | Compose, ports, a domain, TLS, updates, backups         |
+| [Configuration](docs/configuration.md)     | Every environment variable that matters                 |
+| [Coder previews](docs/previews.md)         | A wildcard domain for dev servers in a workspace        |
+| [GitHub](docs/github.md)                   | The GitHub App: permissions, install, repository access |
+| [Firefox sidebar](docs/firefox-sidebar.md) | Using Saale as Firefox's AI chatbot provider            |
+| [Development](docs/development.md)         | A checkout, the test suite, demo data                   |
 
 ## Naming
 

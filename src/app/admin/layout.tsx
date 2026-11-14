@@ -8,6 +8,7 @@ import { AdminNav } from "@/components/admin/admin-nav";
 import { enforceTwoFactorSetup } from "@/lib/auth/two-factor-policy";
 import { PATH_HEADER } from "@/lib/auth/redirect";
 import { getWorkspaceName } from "@/lib/branding/workspace";
+import { getBrandingIcon } from "@/lib/branding/icon-server";
 
 // All admin pages require auth + admin access and redirect if unauthenticated
 // no point prerendering them as static content.
@@ -35,6 +36,10 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   }
 
   return (
-    <AppShell nav={<AdminNav workspaceName={await getWorkspaceName()} />}>{children}</AppShell>
+    <AppShell
+      nav={<AdminNav workspaceName={await getWorkspaceName()} iconName={await getBrandingIcon()} />}
+    >
+      {children}
+    </AppShell>
   );
 }

@@ -1,0 +1,93 @@
+name: build
+
+# Builds the three Saale images from this fork and pushes them to GHCR.
+#
+# The server never builds. It pulls `:custom-<app>-<sha>` the same way it pulls
+# upstream's `:<release>`, so an update stays `pull` + `up -d` and a rollback is
+# one tag in `.env`.
+#
+# Only `custom` is built. `main` mirrors upstream and must never be pushed to.
+
+on:
+  push:
+    branches: [custom]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - ".github/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE: ghcr.io/juli04/askguenther
+
+jobs:
+  # The tag names the upstream version the build sits on, so a running instance
+  # can be traced back to a release: custom-2026.11.8-a1b2c3d
+  version:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="$(node -p "require('./package.json').version")"
+          echo "tag=custom-${app}-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+  images:
+    needs: version
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      # A broken image must not leave the others half-pushed.
+      fail-fast: true
+      matrix:
+        include:
+          - name: web
+            file: Dockerfile
+            target: production
+            cache: web
+          - name: worker
+            file: Dockerfile
+            target: production-worker
+            cache: worker
+          - name: sandbox
+            file: Dockerfile.sandbox
+            target: ""
+            cache: sandbox
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ${{ matrix.file }}
+          target: ${{ matrix.target }}
+          # The app reads this at build time; the console footer shows it.
+          build-args: |
+            NEXT_PUBLIC_APP_VERSION=${{ needs.version.outputs.tag }}
+          tags: |
+            ${{ env.IMAGE }}${{ matrix.name != 'web' && format('-{0}', matrix.name) || '' }}:${{ needs.version.outputs.tag }}
+          cache-from: type=gha,scope=${{ matrix.cache }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.cache }}
+          push: true

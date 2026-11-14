@@ -161,11 +161,14 @@ export interface BrandingPanelProps {
   /** File name of the uploaded avatar, empty for the built-in mark. */
   avatar: string;
   onAvatarChange: (fileName: string) => void;
+  /** Directory name of the uploaded site icon, empty for the shipped icons. */
+  icon: string;
+  onIconChange: (dirName: string) => void;
   /** Renders as a section of the page's panel instead of a panel of its own. */
   flat?: boolean;
 }
 
-/** Admin branding: the instance name, the agent avatar and the accent colours. */
+/** Admin branding: the instance name, the site icon, the agent avatar and the accent colours. */
 export function BrandingPanel({
   name,
   onNameChange,
@@ -173,9 +176,12 @@ export function BrandingPanel({
   onColorsChange,
   avatar,
   onAvatarChange,
+  icon,
+  onIconChange,
   flat,
 }: BrandingPanelProps) {
   const fileInput = useRef<HTMLInputElement>(null);
+  const iconInput = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
 
   // The preview opens in the mode the admin is looking at, and switches on its own.
@@ -226,6 +232,40 @@ export function BrandingPanel({
     setUploading(false);
   };
 
+  const uploadIcon = async (file: File) => {
+    setUploading(true);
+    const form = new FormData();
+    form.set("file", file);
+    try {
+      const data = await fetchJson<{ settings: { brandingIcon: string } }>(
+        "/api/admin/branding/icon",
+        { method: "POST", body: form },
+      );
+      onIconChange(data.settings.brandingIcon);
+      toast.success("Site icon updated");
+    } catch (err) {
+      console.error("Failed to upload the site icon:", err);
+      toast.error(err instanceof Error ? err.message : "Failed to upload the image");
+    }
+    setUploading(false);
+  };
+
+  const clearIcon = async () => {
+    setUploading(true);
+    try {
+      const data = await fetchJson<{ settings: { brandingIcon: string } }>(
+        "/api/admin/branding/icon",
+        { method: "DELETE" },
+      );
+      onIconChange(data.settings.brandingIcon);
+      toast.success("Site icon removed");
+    } catch (err) {
+      console.error("Failed to remove the site icon:", err);
+      toast.error("Failed to remove the icon");
+    }
+    setUploading(false);
+  };
+
   /*
    * A panel here, a section of the page's panel on the admin settings page, so
    * the row of colours does not become a card inside a card.
@@ -255,6 +295,64 @@ export function BrandingPanel({
           placeholder={DEFAULT_WORKSPACE_NAME}
           onChange={(event) => onNameChange(event.target.value)}
         />
+      </div>
+
+      <Separator />
+
+      <div className="flex items-center justify-between gap-3 px-4 py-3">
+        <div className="min-w-0">
+          <Label className="text-sm font-medium">Site icon</Label>
+          <p className="text-muted-foreground text-xs">
+            The favicon, the apple-touch icon, the installed app&apos;s icons and the mark beside
+            the name. One square image; every size is rendered from it.
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          {/* eslint-disable-next-line @next/next/no-img-element -- fixed size, no layout shift */}
+          <img
+            src={icon ? `/api/branding/icon/64?v=${icon}` : "/icons/icon-192.png"}
+            alt=""
+            width={36}
+            height={36}
+            className="border-border h-9 w-9 rounded-lg border object-cover"
+          />
+          <input
+            ref={iconInput}
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/gif,image/avif"
+            className="hidden"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.target.value = "";
+              if (file) void uploadIcon(file);
+            }}
+          />
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={uploading}
+            onClick={() => iconInput.current?.click()}
+          >
+            {uploading ? (
+              <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <ImagePlus className="mr-1 h-3.5 w-3.5" />
+            )}
+            {icon ? "Replace" : "Upload"}
+          </Button>
+          {icon && (
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Remove the site icon"
+              className="text-muted-foreground h-8 w-8"
+              disabled={uploading}
+              onClick={() => void clearIcon()}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+          )}
+        </div>
       </div>
 
       <Separator />

@@ -6,6 +6,8 @@ import {
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { createSandboxOperations } from "@/lib/sandbox/operations";
+import { githubCredentialPolicy } from "@/lib/integrations/github-credentials";
+import { resolveGithubSessionEnv } from "@/lib/integrations/github-session";
 import { resolveSandboxEnv } from "@/lib/sandbox/env";
 import { userIdentity } from "@/lib/sandbox/identity";
 import { userWorkspacePath } from "@/lib/sandbox/workspace";
@@ -54,8 +56,29 @@ export async function createSandboxScopedTools(
   const ops = createSandboxOperations({
     identity: userIdentity(userId),
     root: homeDir,
-    // A name the user set wins over Saale's.
-    env: () => ({ ...sessionEnvVars(userId, sessionId), ...userEnv }),
+    // A name the user set wins over Saale's — except `GH_TOKEN`, where the app's
+    // narrowed installation token has to win: it is what confines a chat to its
+    // own repository. Resolved per command, because the token lasts an hour.
+    env: async () => {
+      // One GitHub credential per command, never two: the policy either hands in
+      // the app's narrowed token and drops the account's own `GH_TOKEN`, or it
+      // leaves that variable alone and delivers nothing.
+      const policy = await githubCredentialPolicy(userId).catch((err: unknown) => {
+        console.error(`Failed to resolve the GitHub credential policy of ${userId}:`, err);
+        return { injectAppToken: false, stripUserToken: false };
+      });
+      const accountEnv: Record<string, string> = { ...userEnv };
+      if (policy.stripUserToken) delete accountEnv.GH_TOKEN;
+
+      const appEnv = policy.injectAppToken
+        ? await resolveGithubSessionEnv(userId, sessionId).catch((err: unknown) => {
+            console.error(`Failed to resolve the GitHub token of session ${sessionId}:`, err);
+            return {};
+          })
+        : {};
+
+      return { ...sessionEnvVars(userId, sessionId), ...accountEnv, ...appEnv };
+    },
   });
 
   return {
