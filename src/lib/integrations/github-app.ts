@@ -464,8 +464,17 @@ export async function signOutGithubApp(userId: string): Promise<void> {
  * A refresh GitHub refuses removes the row and returns null: an expired
  * authorization is a state the card can explain, while a token that fails every
  * command is not.
+ *
+ * `refreshWithinMs` widens the window a caller wants the token refreshed in. The
+ * sweep that keeps a workspace's credential file fresh passes its own, so a token
+ * is replaced hours before it would die rather than five minutes before — the
+ * five-minute default is for a caller that uses the token right away.
  */
-export async function readGithubUserAccess(userId: string): Promise<GithubUserAccess | null> {
+export async function readGithubUserAccess(
+  userId: string,
+  options: { refreshWithinMs?: number } = {},
+): Promise<GithubUserAccess | null> {
+  const refreshWithin = options.refreshWithinMs ?? REFRESH_SKEW_MS;
   const row = await prisma.githubUserToken
     .findUnique({ where: { userId } })
     .catch((err: unknown) => {
@@ -474,7 +483,7 @@ export async function readGithubUserAccess(userId: string): Promise<GithubUserAc
     });
   if (!row) return null;
 
-  if (row.accessExpiresAt.getTime() - REFRESH_SKEW_MS > Date.now()) {
+  if (row.accessExpiresAt.getTime() - refreshWithin > Date.now()) {
     try {
       return {
         accessToken: decrypt(row.encryptedAccessToken),

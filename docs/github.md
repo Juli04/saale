@@ -94,6 +94,15 @@ sign-out, and before a command that talks to a remote:
 - **CLI source.** Those three are removed; `gh`'s own login, which Saale never
   touches, is what commands use.
 
+The token file carries the moment its token stops working, and Saale refreshes it
+on a timer — every few minutes it looks for accounts whose token expires inside
+the next one and a half hours and replaces it, writing the new pair into the file.
+A command the agent runs itself never passes through Saale, so without that pass
+the file would keep whatever token was written last; before this, a workspace could
+carry a dead one for days. Its readers refuse an expired token rather than sending
+it: git and `gh` then say the credential expired instead of GitHub answering
+`401 Bad credentials`, which reads like a broken server.
+
 In a **coder chat** the token is narrower still: Saale mints an installation
 token for that chat's repository alone (`contents`, `pull_requests`, `workflows`
 write, `checks` read) and puts it in the command's `GH_TOKEN`. Both the git

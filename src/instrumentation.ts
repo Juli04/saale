@@ -10,7 +10,8 @@
  * A start also means the previous process's chat runs are gone (see
  * `resume-interrupted-runs.ts`), so those are picked back up here, once the rest
  * of the stack has had a moment to come up. Chat deletions that were marked and
- * never finished get a sweep of their own.
+ * never finished get a sweep of their own, and so do the workspace GitHub
+ * credentials, which the volume keeps between restarts.
  *
  * The worker and the sandbox service do the same thing on their own startup;
  * the migration is idempotent and safe to run concurrently.
@@ -30,4 +31,9 @@ export async function register(): Promise<void> {
 
   const { startDeleteSweep } = await import("@/lib/chat/delete-runner");
   startDeleteSweep();
+
+  // A credential file no process refreshed goes stale on the volume; this keeps
+  // the workspaces' GitHub tokens usable without anyone opening the card.
+  const { startGithubCredentialSweep } = await import("@/lib/integrations/github-credential-sweep");
+  startGithubCredentialSweep();
 }
