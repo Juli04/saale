@@ -188,6 +188,10 @@ export async function applyGithubHelper(userId: string, source: GithubSource | "
  * token. A stale token therefore degrades to the CLI login instead of failing a
  * push outright.
  *
+ * A token that has *expired* does not degrade: it is refused with a line that
+ * says so. Falling back would quietly reach for the account's own CLI login,
+ * which is the wider credential the app source exists to replace.
+ *
  * Commands Saale starts carry `GH_TOKEN` (see `resolveGithubCommandEnv`), but a
  * command the agent types in a terminal has only what the shell has, which is
  * why `installGhShim` puts a `gh` in front of the real one: the shim reads the
@@ -215,6 +219,16 @@ case "$1" in
       exit 0
     fi
     token=$(sed -n 's/.*"token"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p' "\${CREDENTIAL_FILE}" 2>/dev/null)
+    expires=$(sed -n 's/.*"expiresAt"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p' "\${CREDENTIAL_FILE}" 2>/dev/null)
+    deadline=$(date -u -d "$expires" +%s 2>/dev/null)
+    # An expired token is refused here rather than sent: GitHub's 401 reads like a
+    # broken server, and falling through to the CLI login would quietly use the wider
+    # credential this file exists to replace. A stamp that does not parse stays usable,
+    # which is what a file written before this field existed looks like.
+    if [ -n "$expires" ] && [ -n "$deadline" ] && [ "$deadline" -le "$(date -u +%s)" ]; then
+      echo "saale: this workspace's GitHub credential expired at $expires; it refreshes on its own, so retrying in a few minutes may be enough — otherwise open Settings > Integrations > GitHub" >&2
+      exit 1
+    fi
     if [ -n "$token" ]; then
       echo "username=x-access-token"
       echo "password=$token"
@@ -242,6 +256,16 @@ if [ -n "$SAALE_NO_GITHUB_CREDENTIAL" ]; then
 fi
 if [ -z "$GH_TOKEN" ]; then # a chat's narrowed token wins
   token=$(sed -n 's/.*"token"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p' "\${CREDENTIAL_FILE}" 2>/dev/null)
+  expires=$(sed -n 's/.*"expiresAt"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p' "\${CREDENTIAL_FILE}" 2>/dev/null)
+  deadline=$(date -u -d "$expires" +%s 2>/dev/null)
+  # An expired token is refused here rather than sent: GitHub's 401 reads like a
+  # broken server, and falling through to the CLI login would quietly use the wider
+  # credential this file exists to replace. A stamp that does not parse stays usable,
+  # which is what a file written before this field existed looks like.
+  if [ -n "$expires" ] && [ -n "$deadline" ] && [ "$deadline" -le "$(date -u +%s)" ]; then
+    echo "saale: this workspace's GitHub credential expired at $expires; it refreshes on its own, so retrying in a few minutes may be enough — otherwise open Settings > Integrations > GitHub" >&2
+    exit 1
+  fi
   if [ -n "$token" ]; then
     GH_TOKEN="$token"
     export GH_TOKEN
@@ -257,12 +281,14 @@ function credentialPath(userId: string): string {
 
 /** The `gh` shim, as it is written into one workspace. */
 export function githubGhShimScript(userId: string): string {
-  return GH_SHIM_SCRIPT.replace("${CREDENTIAL_FILE}", credentialPath(userId));
+  // Every mention: the script reads the token and the expiry from the same file,
+  // and `replace` would substitute only the first.
+  return GH_SHIM_SCRIPT.replaceAll("${CREDENTIAL_FILE}", credentialPath(userId));
 }
 
 /** The helper script, as it is written into one workspace. */
 export function githubHelperScript(userId: string): string {
-  return HELPER_SCRIPT.replace("\${CREDENTIAL_FILE}", credentialPath(userId));
+  return HELPER_SCRIPT.replaceAll("\${CREDENTIAL_FILE}", credentialPath(userId));
 }
 
 /** Write the helper and mark it executable, whoever owns the workspace. */
@@ -298,13 +324,54 @@ async function removeGhShim(userId: string): Promise<void> {
     });
 }
 
-/** Store the token the helper reads. Nothing else is written there. */
-async function writeCredential(userId: string, token: string): Promise<void> {
+/**
+ * The credential file's text.
+ *
+ * The expiry is part of it so both readers — git's helper and the `gh` shim —
+ * can refuse a token that has died instead of sending it and reading GitHub's
+ * `401` as a broken server. A token GitHub issued without an expiry carries no
+ * stamp, and the readers then use it as before.
+ */
+export function githubCredentialFileBody(token: string, expiresAt: Date | null): string {
+  const body = expiresAt ? { token, expiresAt: expiresAt.toISOString() } : { token };
+  return `${JSON.stringify(body)}\n`;
+}
+
+/** Store the token the helper reads, and when it stops working. */
+async function writeCredential(
+  userId: string,
+  token: string,
+  expiresAt: Date | null,
+): Promise<void> {
   await writeWorkspaceFile(
     userId,
     GITHUB_CREDENTIAL_FILE,
-    Buffer.from(`${JSON.stringify({ token })}\n`, "utf8"),
+    Buffer.from(githubCredentialFileBody(token, expiresAt), "utf8"),
   );
+}
+
+/**
+ * Bring one workspace's credential file in line with the account's token.
+ *
+ * Both writers come through here: applying the source, and the sweep that keeps
+ * the file fresh while the source does not change. The file is rewritten only
+ * when its text differs, because both callers run often — a write also moves the
+ * file's mtime, which is how an operator sees when it was last refreshed.
+ */
+export async function syncGithubCredential(
+  userId: string,
+  access: { accessToken: string; expiresAt: Date | null },
+): Promise<void> {
+  const wanted = githubCredentialFileBody(access.accessToken, access.expiresAt);
+  const existing = await fs.readFile(credentialPath(userId), "utf8").catch((err: unknown) => {
+    // A missing file is the normal case on the first command; anything else is
+    // worth a line, because the write below will then have to fix it.
+    if (!isNotFoundError(err)) {
+      console.error(`Failed to read the GitHub credential file of ${userId}:`, err);
+    }
+    return null;
+  });
+  if (existing !== wanted) await writeCredential(userId, access.accessToken, access.expiresAt);
 }
 
 /** Take the token away; the helper then falls back to the CLI. */
@@ -348,7 +415,7 @@ export async function applyGithubSource(
 
   await installHelperScript(userId);
   await installGhShim(userId);
-  await writeCredential(userId, access.accessToken);
+  await syncGithubCredential(userId, access);
   await applyGithubHelper(userId, "app");
   await signOutGithubCli(userId);
   await applyGitIdentity(userId, { login: access.login });
@@ -431,17 +498,7 @@ export async function resolveGithubCommandEnv(userId: string): Promise<Record<st
 
   // The helper git runs for a push reads the same token from the file, so keep
   // the two in step here rather than on a schedule of their own.
-  const absolute = credentialPath(userId);
-  const wanted = `${JSON.stringify({ token: access.accessToken })}\n`;
-  const existing = await fs.readFile(absolute, "utf8").catch((err: unknown) => {
-    // A missing file is the normal case on the first command; anything else is
-    // worth a line, because the write below will then have to fix it.
-    if (!isNotFoundError(err)) {
-      console.error(`Failed to read the GitHub credential file of ${userId}:`, err);
-    }
-    return null;
-  });
-  if (existing !== wanted) await writeCredential(userId, access.accessToken);
+  await syncGithubCredential(userId, access);
 
   return { GH_TOKEN: access.accessToken };
 }

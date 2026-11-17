@@ -9,6 +9,7 @@ import {
   GITHUB_HELPER_FILE,
   applyGithubHelper,
   credentialPolicyFor,
+  githubCredentialFileBody,
   githubGhShimScript,
   githubHelperCommand,
   githubHelperScript,
@@ -212,6 +213,23 @@ describe("applyGithubHelper", () => {
   });
 });
 
+// ─── What the file carries ─────────────────────────────────────────────────
+
+describe("githubCredentialFileBody", () => {
+  it("carries the token and the moment it stops working", () => {
+    const body = githubCredentialFileBody("ghu_1", new Date("2026-11-15T00:11:24.360Z"));
+
+    expect(JSON.parse(body)).toEqual({ token: "ghu_1", expiresAt: "2026-11-15T00:11:24.360Z" });
+    expect(body.endsWith("\n")).toBe(true);
+  });
+
+  it("leaves the stamp out for a token GitHub issued without one", () => {
+    // A file without the field is what every workspace wrote before this change,
+    // and the readers keep honouring it.
+    expect(JSON.parse(githubCredentialFileBody("ghu_1", null))).toEqual({ token: "ghu_1" });
+  });
+});
+
 // ─── The helper script itself ───────────────────────────────────────────────
 
 describe("githubHelperScript", () => {
@@ -229,14 +247,17 @@ describe("githubHelperScript", () => {
   });
 
   /** Write the script and the token file where the workspace would carry them. */
-  async function install(token: string | null): Promise<string> {
+  async function install(token: string | null, expiresAt?: string): Promise<string> {
     const root = path.join(dir, userIdentity(USER));
     const script = path.join(root, GITHUB_HELPER_FILE);
     await fs.mkdir(path.dirname(script), { recursive: true });
     await fs.mkdir(path.dirname(path.join(root, GITHUB_CREDENTIAL_FILE)), { recursive: true });
     await fs.writeFile(script, githubHelperScript(USER));
     if (token) {
-      await fs.writeFile(path.join(root, GITHUB_CREDENTIAL_FILE), JSON.stringify({ token }));
+      await fs.writeFile(
+        path.join(root, GITHUB_CREDENTIAL_FILE),
+        JSON.stringify(expiresAt ? { token, expiresAt } : { token }),
+      );
     }
     return script;
   }
@@ -247,6 +268,17 @@ describe("githubHelperScript", () => {
       encoding: "utf8",
     });
 
+  /** What the helper answered when it refused, instead of throwing at the caller. */
+  function refuse(script: string): { status: number | undefined; stdout: string; stderr: string } {
+    try {
+      ask(script);
+    } catch (err) {
+      const failure = err as { status?: number; stdout?: string; stderr?: string };
+      return { status: failure.status, stdout: failure.stdout ?? "", stderr: failure.stderr ?? "" };
+    }
+    throw new Error("expected the helper to refuse the credential");
+  }
+
   it("answers git with the token it finds", async () => {
     const script = await install("ghs_installation_token");
 
@@ -254,6 +286,29 @@ describe("githubHelperScript", () => {
 
     expect(answer).toContain("username=x-access-token");
     expect(answer).toContain("password=ghs_installation_token");
+  });
+
+  it("answers with a token that has not expired", async () => {
+    const later = new Date(Date.now() + 60 * 60_000).toISOString();
+    const script = await install("ghu_alive", later);
+
+    expect(ask(script)).toContain("password=ghu_alive");
+  });
+
+  it("refuses a token that has expired instead of sending it", async () => {
+    // A dead token used to go to GitHub, and `401 Bad credentials` was the only
+    // thing the agent saw: it reads like a broken server, not like a credential
+    // that needs opening the card.
+    const past = new Date(Date.now() - 60_000).toISOString();
+    const script = await install("ghu_dead", past);
+
+    const answer = refuse(script);
+
+    expect(answer.status).toBe(1);
+    expect(answer.stderr).toContain("GitHub credential expired at");
+    // No fallback to the CLI login: that is the wider credential this file
+    // exists to replace.
+    expect(answer.stdout).not.toContain("password=");
   });
 
   it("prefers a token from the environment over the file", async () => {
@@ -284,11 +339,16 @@ describe("githubHelperScript", () => {
     expect(shim).toContain("SAALE_NO_GITHUB_CREDENTIAL");
     expect(shim).toContain("exit 1");
 
+    // Both readers refuse an expired token, because both read the same file.
+    expect(shim).toContain("GitHub credential expired at");
+    expect(shim).toContain("date -u -d");
+
     const helper = githubHelperScript(USER);
     expect(helper).toContain("SAALE_NO_GITHUB_CREDENTIAL");
     // The message names no cause: the variable is set for three different ones.
     expect(shim).toContain("carries no GitHub credential");
     expect(helper).toContain("carries no GitHub credential");
+    expect(helper).toContain("GitHub credential expired at");
     expect(shim).toContain("exec /usr/bin/gh");
   });
 
@@ -300,9 +360,9 @@ describe("githubHelperScript", () => {
     // runs on, and a build host may well be logged in. What matters is that the
     // helper delegates instead of failing, so a stale token degrades to the CLI.
     expect(body).toContain("exec /usr/bin/gh auth git-credential");
-    // The one early exit is the refusal for a chat that may not use GitHub at
-    // all; without that variable the script always ends up at the CLI.
-    expect(body.split("exit 1").length - 1).toBe(1);
+    // Two early exits: the refusal for a chat that may not use GitHub at all, and
+    // an expired credential. Without either, the script ends at the CLI.
+    expect(body.split("exit 1").length - 1).toBe(2);
     expect(body.indexOf("SAALE_NO_GITHUB_CREDENTIAL")).toBeLessThan(
       body.indexOf("exec /usr/bin/gh auth git-credential"),
     );
